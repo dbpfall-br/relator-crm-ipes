@@ -1,0 +1,637 @@
+// ============================================================================
+//  Relator CRM — Prisma schema (PostgreSQL)
+//  Convenção: campos "customFields Json" usam JSONB no Postgres, permitindo
+//  que o usuário final crie campos próprios (ex.: "Aniversário", "Contrato").
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ----------------------------------------------------------------------------
+//  Enums
+// ----------------------------------------------------------------------------
+
+enum Role {
+  ADMIN // acesso total, gerencia usuários e configs
+  MANAGER // vê o pipeline da equipe, gerencia vendedores subordinados
+  SALES // vendedor: opera suas próprias negociações
+}
+
+enum DealStatus {
+  OPEN
+  WON
+  LOST
+}
+
+enum ActivityType {
+  CALL
+  EMAIL
+  MEETING
+  NOTE
+  TASK
+  LUNCH
+  VISIT
+  WHATSAPP
+}
+
+enum WebhookDeliveryStatus {
+  SUCCESS
+  FAILED
+}
+
+// Nível de qualificação da negociação (frio → quente).
+enum DealQualification {
+  NONE
+  COLD
+  WARM
+  HOT
+}
+
+// Entidade à qual um campo personalizado pertence.
+enum CustomFieldEntity {
+  DEAL
+  COMPANY
+  CONTACT
+}
+
+// Tipo de dado de um campo personalizado.
+enum CustomFieldType {
+  TEXT
+  NUMBER
+  DATE
+  SELECT
+  MULTISELECT
+}
+
+// Tipo do funil: vendas (padrão) ou pré-vendas/leads.
+enum PipelineKind {
+  SALES
+  LEADS
+}
+
+enum ProposalStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  REJECTED
+}
+
+// Automação: gatilhos (eventos de domínio) e ações.
+enum AutomationTrigger {
+  DEAL_CREATED
+  DEAL_MOVED
+  DEAL_WON
+  DEAL_LOST
+  DEAL_CONVERTED
+}
+
+enum AutomationAction {
+  CREATE_TASK
+  CREATE_NOTE
+  MOVE_STAGE
+  SET_QUALIFICATION
+}
+
+enum QuestionType {
+  TEXT
+  BOOLEAN
+  SELECT
+}
+
+enum TemplateType {
+  EMAIL
+  PROPOSAL
+}
+
+enum GoalMetric {
+  WON_VALUE
+  WON_COUNT
+}
+
+// ----------------------------------------------------------------------------
+//  Users — vendedores e gestores (com hierarquia self-relation)
+// ----------------------------------------------------------------------------
+
+model User {
+  id           String  @id @default(uuid())
+  name         String
+  email        String  @unique
+  passwordHash String
+  role         Role    @default(SALES)
+  isActive     Boolean @default(true)
+
+  // Hierarquia: um gestor tem vários subordinados
+  managerId    String?
+  manager      User?   @relation("TeamHierarchy", fields: [managerId], references: [id], onDelete: SetNull)
+  subordinates User[]  @relation("TeamHierarchy")
+
+  // Relações de trabalho
+  ownedDeals      Deal[]     @relation("DealOwner")
+  ownedContacts   Contact[]  @relation("ContactOwner")
+  ownedCompanies  Company[]  @relation("CompanyOwner")
+  activities      Activity[] @relation("ActivityOwner")
+  refreshTokens   RefreshToken[]
+  savedFilters    SavedFilter[]
+  goals           Goal[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([managerId])
+  @@map("users")
+}
+
+// Persistência de refresh tokens (permite revogação / logout)
+model RefreshToken {
+  id        String   @id @default(uuid())
+  tokenHash String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+// ----------------------------------------------------------------------------
+//  Companies & Contacts
+// ----------------------------------------------------------------------------
+
+model Company {
+  id        String  @id @default(uuid())
+  name      String
+  domain    String?
+  industry  String?
+  phone     String?
+  website   String?
+
+  // Campos customizados definidos pelo usuário final (JSONB)
+  customFields Json @default("{}")
+
+  ownerId String?
+  owner   User?   @relation("CompanyOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+
+  contacts Contact[]
+  deals    Deal[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([ownerId])
+  @@index([name])
+  @@map("companies")
+}
+
+model Contact {
+  id        String  @id @default(uuid())
+  firstName String
+  lastName  String?
+  email     String?
+  phone     String?
+  jobTitle  String?
+
+  customFields Json @default("{}")
+
+  companyId String?
+  company   Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+
+  ownerId String?
+  owner   User?   @relation("ContactOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+
+  deals      Deal[]
+  activities Activity[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([companyId])
+  @@index([ownerId])
+  @@index([email])
+  @@map("contacts")
+}
+
+// ----------------------------------------------------------------------------
+//  Pipeline & Stages — colunas do Kanban
+// ----------------------------------------------------------------------------
+
+model Pipeline {
+  id        String       @id @default(uuid())
+  name      String
+  kind      PipelineKind @default(SALES)
+  isDefault Boolean      @default(false)
+  position  Int          @default(0)
+
+  stages Stage[]
+  deals  Deal[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("pipelines")
+}
+
+model Stage {
+  id         String  @id @default(uuid())
+  name       String
+  position   Int // ordem da coluna no Kanban
+  // probabilidade padrão de fechamento nesta etapa (0-100), útil para forecast
+  probability Int    @default(0)
+
+  pipelineId String
+  pipeline   Pipeline @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+
+  deals Deal[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([pipelineId, position])
+  @@index([pipelineId])
+  @@map("stages")
+}
+
+// ----------------------------------------------------------------------------
+//  Deals — negociações / oportunidades
+// ----------------------------------------------------------------------------
+
+model Deal {
+  id                String     @id @default(uuid())
+  title             String
+  // valor em centavos evita erros de ponto flutuante em dinheiro
+  amountCents       Int        @default(0)
+  currency          String     @default("BRL")
+  status            DealStatus @default(OPEN)
+  qualification     DealQualification @default(NONE)
+  expectedCloseDate DateTime?
+  closedAt          DateTime?
+  // preenchido quando um lead (funil LEADS) é convertido em negociação de vendas
+  convertedAt       DateTime?
+  // posição dentro da coluna do Kanban (ordenação vertical)
+  position          Int        @default(0)
+
+  customFields Json @default("{}")
+
+  // Fonte / campanha de origem (listas configuráveis)
+  sourceId   String?
+  source     Source?   @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+  campaignId String?
+  campaign   Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+
+  // Motivo de perda (preenchido ao marcar como perdida)
+  lossReasonId String?
+  lossReason   LossReason? @relation(fields: [lossReasonId], references: [id], onDelete: SetNull)
+
+  pipelineId String
+  pipeline   Pipeline @relation(fields: [pipelineId], references: [id])
+
+  stageId String
+  stage   Stage  @relation(fields: [stageId], references: [id])
+
+  ownerId String
+  owner   User   @relation("DealOwner", fields: [ownerId], references: [id])
+
+  contactId String?
+  contact   Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
+  companyId String?
+  company   Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+
+  activities Activity[]
+  items      DealItem[]
+  proposals  Proposal[]
+  questionnaireResponses DealQuestionnaireResponse[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([stageId])
+  @@index([ownerId])
+  @@index([status])
+  @@index([pipelineId])
+  @@map("deals")
+}
+
+// ----------------------------------------------------------------------------
+//  Activities — histórico (timeline) e tarefas futuras (follow-ups)
+// ----------------------------------------------------------------------------
+
+model Activity {
+  id      String       @id @default(uuid())
+  type    ActivityType
+  subject String
+  notes   String?
+
+  // Tarefa: dueAt no futuro + done=false. Histórico: dueAt no passado / done=true.
+  dueAt       DateTime?
+  completedAt DateTime?
+  done        Boolean   @default(false)
+
+  ownerId String
+  owner   User   @relation("ActivityOwner", fields: [ownerId], references: [id])
+
+  dealId String?
+  deal   Deal?   @relation(fields: [dealId], references: [id], onDelete: Cascade)
+
+  contactId String?
+  contact   Contact? @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([ownerId])
+  @@index([dealId])
+  @@index([contactId])
+  @@index([dueAt])
+  @@map("activities")
+}
+
+// ----------------------------------------------------------------------------
+//  Webhooks — integração de saída (automações, multiagentes)
+// ----------------------------------------------------------------------------
+
+model Webhook {
+  id          String  @id @default(uuid())
+  url         String
+  // Eventos assinados (ex.: ["deal.created","deal.moved"]). Vazio = todos.
+  events      String[]
+  // Segredo p/ assinatura HMAC-SHA256 no header X-Relator-Signature.
+  secret      String
+  description String?
+  isActive    Boolean @default(true)
+
+  deliveries WebhookDelivery[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("webhooks")
+}
+
+// Log de entregas — observabilidade e depuração das automações.
+model WebhookDelivery {
+  id           String                @id @default(uuid())
+  event        String
+  status       WebhookDeliveryStatus
+  responseCode Int?
+  error        String?
+  payload      Json
+
+  webhookId String
+  webhook   Webhook @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([webhookId])
+  @@map("webhook_deliveries")
+}
+
+// ----------------------------------------------------------------------------
+//  Campos personalizados — definição por entidade (os valores vivem no JSONB
+//  `customFields` de Deal/Company/Contact). Este modelo é o "esquema" que a UI
+//  usa para renderizar e validar esses campos.
+// ----------------------------------------------------------------------------
+
+model CustomFieldDef {
+  id       String            @id @default(uuid())
+  entity   CustomFieldEntity
+  key      String // chave técnica no JSON (ex.: "data_aniversario")
+  label    String
+  type     CustomFieldType
+  options  String[] // usado por SELECT / MULTISELECT
+  required Boolean           @default(false)
+  position Int               @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([entity, key])
+  @@map("custom_field_defs")
+}
+
+// ----------------------------------------------------------------------------
+//  Catálogos configuráveis: motivo de perda, fonte e campanha.
+// ----------------------------------------------------------------------------
+
+model LossReason {
+  id        String  @id @default(uuid())
+  label     String
+  isActive  Boolean @default(true)
+  position  Int     @default(0)
+  deals     Deal[]
+  createdAt DateTime @default(now())
+
+  @@map("loss_reasons")
+}
+
+model Source {
+  id        String  @id @default(uuid())
+  label     String
+  deals     Deal[]
+  createdAt DateTime @default(now())
+
+  @@map("sources")
+}
+
+model Campaign {
+  id        String  @id @default(uuid())
+  label     String
+  deals     Deal[]
+  createdAt DateTime @default(now())
+
+  @@map("campaigns")
+}
+
+// ----------------------------------------------------------------------------
+//  Produtos & Propostas
+// ----------------------------------------------------------------------------
+
+model Product {
+  id             String     @id @default(uuid())
+  name           String
+  code           String?
+  unitPriceCents Int        @default(0)
+  isActive       Boolean    @default(true)
+  items          DealItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("products")
+}
+
+// Item (linha) de uma negociação. A soma dos itens define o valor do deal.
+model DealItem {
+  id             String   @id @default(uuid())
+  description    String
+  quantity       Int      @default(1)
+  unitPriceCents Int      @default(0)
+
+  dealId String
+  deal   Deal   @relation(fields: [dealId], references: [id], onDelete: Cascade)
+
+  productId String?
+  product   Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([dealId])
+  @@map("deal_items")
+}
+
+// Proposta gerada a partir dos itens da negociação (snapshot imutável dos itens).
+model Proposal {
+  id          String         @id @default(uuid())
+  title       String
+  intro       String?
+  status      ProposalStatus @default(DRAFT)
+  totalCents  Int            @default(0)
+  // snapshot: [{ description, quantity, unitPriceCents }]
+  items       Json
+  // token para visualização pública (link compartilhável, sem login)
+  publicToken String         @unique
+  sentAt      DateTime?
+
+  dealId String
+  deal   Deal   @relation(fields: [dealId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([dealId])
+  @@map("proposals")
+}
+
+// ----------------------------------------------------------------------------
+//  Automação (gatilho → ação)
+// ----------------------------------------------------------------------------
+
+model AutomationRule {
+  id            String            @id @default(uuid())
+  name          String
+  trigger       AutomationTrigger
+  // condição do gatilho (ex.: { stageId } para DEAL_MOVED)
+  triggerConfig Json              @default("{}")
+  action        AutomationAction
+  // parâmetros da ação (ex.: { subject, type, dueInDays } p/ CREATE_TASK)
+  actionConfig  Json              @default("{}")
+  isActive      Boolean           @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("automation_rules")
+}
+
+// ----------------------------------------------------------------------------
+//  Questionários (qualificação)
+// ----------------------------------------------------------------------------
+
+model Questionnaire {
+  id       String  @id @default(uuid())
+  name     String
+  isActive Boolean @default(true)
+
+  questions QuestionnaireQuestion[]
+  responses DealQuestionnaireResponse[]
+
+  createdAt DateTime @default(now())
+
+  @@map("questionnaires")
+}
+
+model QuestionnaireQuestion {
+  id       String       @id @default(uuid())
+  text     String
+  type     QuestionType @default(TEXT)
+  options  String[] // para type SELECT
+  position Int          @default(0)
+
+  questionnaireId String
+  questionnaire   Questionnaire @relation(fields: [questionnaireId], references: [id], onDelete: Cascade)
+
+  @@index([questionnaireId])
+  @@map("questionnaire_questions")
+}
+
+// Respostas de um questionário para uma negociação (answers = { questionId: valor }).
+model DealQuestionnaireResponse {
+  id      String @id @default(uuid())
+  answers Json   @default("{}")
+
+  dealId String
+  deal   Deal   @relation(fields: [dealId], references: [id], onDelete: Cascade)
+
+  questionnaireId String
+  questionnaire   Questionnaire @relation(fields: [questionnaireId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([dealId, questionnaireId])
+  @@index([dealId])
+  @@map("deal_questionnaire_responses")
+}
+
+// ----------------------------------------------------------------------------
+//  Modelos de e-mail / proposta (com placeholders {{...}})
+// ----------------------------------------------------------------------------
+
+model Template {
+  id      String       @id @default(uuid())
+  name    String
+  type    TemplateType
+  subject String? // usado por e-mail
+  body    String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("templates")
+}
+
+// ----------------------------------------------------------------------------
+//  Metas (por usuário e mês)
+// ----------------------------------------------------------------------------
+
+model Goal {
+  id     String     @id @default(uuid())
+  period String // AAAA-MM
+  metric GoalMetric
+  // valor-alvo: centavos (WON_VALUE) ou contagem (WON_COUNT)
+  target Int
+
+  // userId nulo = meta do time inteiro
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, period, metric])
+  @@map("goals")
+}
+
+// ----------------------------------------------------------------------------
+//  Filtros salvos do funil (por usuário).
+// ----------------------------------------------------------------------------
+
+model SavedFilter {
+  id     String @id @default(uuid())
+  name   String
+  // Consulta serializada (mesmos parâmetros de GET /deals)
+  query  Json
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("saved_filters")
+}

@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="pt-br">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Relator AI</title>
+    <link rel="stylesheet" href="sidepanel.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Relator AI</h1>
+      <div class="status" id="status">pronto</div>
+    </header>
+
+    <section class="controls">
+      <button id="stopBtn" class="danger" disabled>Parar gravação</button>
+      <button id="settingsBtn" title="Configurações">⚙</button>
+    </section>
+
+    <section id="startHint" class="hint-banner">
+      Para iniciar, clique no ícone do <strong>Relator AI</strong> na barra
+      de ferramentas com a aba da reunião focada. Um segundo clique para.
+    </section>
+
+    <section class="meta" id="meta"></section>
+
+    <section class="tabs">
+      <button class="tab active" data-tab="live">Transcrição</button>
+      <button class="tab" data-tab="ata">Ata</button>
+      <button class="tab" data-tab="resumo">Resumo</button>
+      <button class="tab" data-tab="actions">Action items</button>
+    </section>
+
+    <section class="panel active" id="panel-live">
+      <div id="transcript" class="transcript" aria-live="polite"></div>
+    </section>
+
+    <section class="panel" id="panel-ata">
+      <div class="panel-actions">
+        <button id="genAta">Gerar ata formal</button>
+        <button id="copyAta" class="ghost">Copiar</button>
+        <button id="dlAta" class="ghost">Baixar .md</button>
+      </div>
+      <div id="ataOut" class="markdown"></div>
+    </section>
+
+    <section class="panel" id="panel-resumo">
+      <div class="panel-actions">
+        <button id="genResumo">Gerar resumo</button>
+        <button id="copyResumo" class="ghost">Copiar</button>
+        <button id="dlResumo" class="ghost">Baixar .md</button>
+      </div>
+      <div id="resumoOut" class="markdown"></div>
+    </section>
+
+    <section class="panel" id="panel-actions">
+      <div class="panel-actions">
+        <button id="genActions">Gerar action items</button>
+        <button id="copyActions" class="ghost">Copiar</button>
+      </div>
+      <div id="actionsOut"></div>
+    </section>
+
+    <footer>
+      <button id="dlTranscript" class="ghost">Baixar transcrição</button>
+      <button id="clearBtn" class="ghost">Limpar sessão</button>
+    </footer>
+
+    <script type="module" src="sidepanel.js"></script>
+  </body>
+</html>

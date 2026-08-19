@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="pt-br">
+  <head>
+    <meta charset="utf-8" />
+    <title>Relator AI — Configurações</title>
+    <style>
+      :root {
+        --bg: #0f1115; --bg-2: #171a21; --fg: #e7ecf3;
+        --fg-muted: #9aa3b2; --accent: #5b8cff; --border: #262b35;
+      }
+      body {
+        margin: 0; padding: 40px 20px; background: var(--bg); color: var(--fg);
+        font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        display: flex; justify-content: center;
+      }
+      main { max-width: 560px; width: 100%; }
+      h1 { margin-top: 0; font-size: 22px; }
+      .card {
+        background: var(--bg-2); border: 1px solid var(--border);
+        border-radius: 10px; padding: 18px 20px; margin-bottom: 16px;
+      }
+      label { display: block; margin-bottom: 4px; font-weight: 600; }
+      .hint { color: var(--fg-muted); font-size: 12px; margin: 4px 0 12px; }
+      input[type=text], input[type=password], select {
+        width: 100%; padding: 8px 10px; background: #0b0d12;
+        color: var(--fg); border: 1px solid var(--border); border-radius: 6px;
+        font: inherit;
+      }
+      button {
+        background: var(--accent); color: #fff; border: none;
+        padding: 9px 16px; border-radius: 6px; cursor: pointer;
+        font: inherit; font-weight: 600;
+      }
+      button:hover { filter: brightness(1.1); }
+      .saved {
+        color: #39c07a; margin-left: 10px; font-size: 12px;
+        opacity: 0; transition: opacity .15s;
+      }
+      .saved.on { opacity: 1; }
+      a { color: var(--accent); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Relator AI — Configurações</h1>
+
+      <div class="card">
+        <label for="apiKey">Gemini API key</label>
+        <div class="hint">
+          Crie a sua em
+          <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">
+            aistudio.google.com/apikey
+          </a>. A chave fica apenas em <code>chrome.storage.local</code> no seu navegador.
+        </div>
+        <input id="apiKey" type="password" placeholder="AI..." autocomplete="off" />
+      </div>
+
+      <div class="card">
+        <label for="geminiModel">Modelo do Gemini</label>
+        <div class="hint">Flash é rápido e barato; Pro é mais caro e melhor para atas longas.</div>
+        <select id="geminiModel">
+          <option value="gemini-2.5-flash">gemini-2.5-flash (recomendado)</option>
+          <option value="gemini-2.5-pro">gemini-2.5-pro</option>
+          <option value="gemini-2.0-flash">gemini-2.0-flash</option>
+        </select>
+      </div>
+
+      <div class="card">
+        <label for="whisperModel">Modelo do Whisper (local)</label>
+        <div class="hint">
+          Baixado na primeira execução e armazenado em cache. tiny ~39 MB, base ~74 MB, small ~244 MB.
+        </div>
+        <select id="whisperModel">
+          <option value="Xenova/whisper-tiny">whisper-tiny (mais rápido)</option>
+          <option value="Xenova/whisper-base">whisper-base (recomendado)</option>
+          <option value="Xenova/whisper-small">whisper-small (mais preciso)</option>
+        </select>
+      </div>
+
+      <div class="card">
+        <label for="language">Idioma da transcrição</label>
+        <select id="language">
+          <option value="portuguese">Português</option>
+          <option value="english">Inglês</option>
+          <option value="spanish">Espanhol</option>
+          <option value="french">Francês</option>
+        </select>
+      </div>
+
+      <button id="saveBtn">Salvar</button>
+      <span id="saved" class="saved">Salvo ✓</span>
+    </main>
+    <script type="module" src="options.js"></script>
+  </body>
+</html>
